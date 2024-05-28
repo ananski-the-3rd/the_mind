@@ -1,0 +1,5 @@
+A simulation that plays the excellent board game 'The Mind'
+Created for educational purposes
+Great practice for multithreading
+There's a bunch of parameters to play with and control the game's difficulty, I might organize them in a csv at some point...
+Enjoy :)
