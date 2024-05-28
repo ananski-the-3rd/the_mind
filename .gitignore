@@ -1,0 +1,10 @@
+# file extensions
+*.[oa]
+*.exe
+*.out
+*.csv
+*log.txt
+
+# other stuff
+.vscode/**
+test.*
