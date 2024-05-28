@@ -9,16 +9,17 @@
 #include <pthread.h>
 #include <time.h>
 #include <unistd.h>
+#include <math.h>
 #include <stdatomic.h>
 #include <immintrin.h>
 #include <threads/threads_api.h>
 
 #define MIND_DECK_SIZE (100)
-#define MIND_N_PLAYERS (5)
-#define MIND_MAX_LEVEL (5)
-#define MIND_MIN_SKILL 0.5f
-#define MIND_MAX_SKILL 0.95f
-#define MIND_AVERAGE_BEAT (40)
+#define MIND_N_PLAYERS (3)
+#define MIND_MAX_LEVEL (12)
+#define MIND_MIN_SKILL 0.66f
+#define MIND_MAX_SKILL 0.90f
+#define MIND_AVERAGE_BEAT (100)
 #define MIND_MAX_BEAT (MIND_AVERAGE_BEAT * 3)
 #define MIND_MIN_BEAT (MIND_AVERAGE_BEAT / 3)
 #ifdef DEBUG_BUILD
@@ -76,7 +77,7 @@ struct player_t {
     float focus;                            // A variable between 0 and 1
     uint32_t beat;                          // the player's internal time interval for synchronizing the game. May change during the game.
     uint32_t count;                         // number of beats since the round's start.
-    uint8_t timeout[mind_n_player_effects]; // countdown for player effects that shouldn't repeat too often
+    uint32_t timeout[mind_n_player_effects]; // countdown for player effects that shouldn't repeat too often
     uint8_t pile_card;                       // the player keeps track of the pile's top card.
     uint8_t last_card_played;               // the last card that this player played
     uint8_t threshold;                      // the player's threshold for feeling like their smallest card should be played soon.

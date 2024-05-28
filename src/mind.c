@@ -249,24 +249,25 @@ void playTurn(player_t *player) {
     }
 
     // player should adjust the current count and their beat according to the top card
-    if (player->pile_card < pile_card) {
+    if (player->pile_card != pile_card) {
         MUTEX_CHECKLOCK(game->pile_mtx, game->level.is_over);
         if (game->level.is_over) return;
         playerAdjust(player, pile_card);
         MUTEX_UNLOCK(game->pile_mtx);
+        player->count = (player->count < pile_card)? pile_card: player->count;
+        player->pile_card = pile_card;
     }
-    player->pile_card = pile_card;
     
     
-    if (lowest_card < pile_card + player->threshold) {
+    if (lowest_card > pile_card + (3 * player->threshold)) {
+        // player gets bored if their card is far away (lower focus, higher beat)
+        playerBored(player);
+    } else if (lowest_card < pile_card + player->threshold) {
         // player gets hasitant if close (higher focus, slower beat)
         playerHesitate(player);
     } else if ((randf(0.0F, 1.0F) * (1.0F - player->skill)) > 0.8F) {
         // player gets randomly confused - loses count
         playerConfused(player); // Don't make him an account
-    } else {
-        // player's default state is that of boredom/impatience (lower focus, higher beat)
-        playerBored(player);
     }
     
     MUTEX_CHECKLOCK(game->pile_mtx, game->level.is_over);
@@ -285,7 +286,7 @@ void playTurn(player_t *player) {
     return;
 }
 
-/// @brief Adjust the player's beat such that their count since the previous card played would have reached req_card. Adjustment may be in either direction
+/// @brief Adjust the player's beat such that their count since the previous card played would have been closer to req_card. Adjustment may be in either direction
 /// @param player pointer to a player struct
 /// @param req_card the card that the player should adjust for
 void playerAdjust(player_t *player, uint8_t req_card) {
@@ -293,13 +294,22 @@ void playerAdjust(player_t *player, uint8_t req_card) {
         player->timeout[ADJUST]--;
         return;
     }
-    player->timeout[ADJUST] = 2;
+    player->timeout[ADJUST] = player->game->n_players + 1;
 
     float n_beats_passed = player->count - player->pile_card;
     float n_beats_should_have_passed = req_card - player->pile_card;
     float old_beat = (float)player->beat;
     float new_beat = old_beat * n_beats_passed / n_beats_should_have_passed;
-    uint32_t avg_beat = (uint32_t)((new_beat + old_beat) * 0.5F);
+    
+    // If the adjustment would be too big or negligible, skip it
+    float change = new_beat / old_beat;
+    if (new_beat < 1.0F || fabsf((change - 1.0F)) < 0.01F || change < 0.5F || change > 2.0F) {
+        return;
+    }
+    
+    float weight = 0.33F + 1.67F * ((old_beat < MIND_AVERAGE_BEAT) == (change > 1.0F));
+
+    uint32_t avg_beat = (uint32_t)((weight * new_beat + old_beat) / (weight + 1.0F));
     player->beat = randi(avg_beat, playerGetError(player) * 0.5F);
     playerFixBeat(player);
     
@@ -313,11 +323,11 @@ void playerBored(player_t *player) {
         player->timeout[BORED]--;
         return;
     }
-    player->timeout[BORED] = player->threshold;
+    player->timeout[BORED] = player->threshold * 2;
 
     player->focus *= 0.95F;
-    float err = playerGetError(player) * 0.25F;
-    player->beat = randi(player->beat * (1.0F - err), err / (1.0F + err));
+    float err = playerGetError(player) * 0.5F;
+    player->beat = randi(player->beat * (1.0F - err), err / (1.0F - err)) * 0.95F;
 
     playerFixBeat(player);
     playerFixFocus(player);
@@ -331,12 +341,12 @@ void playerHesitate(player_t *player) {
         player->timeout[HESITATE]--;
         return;
     }
-    player->timeout[HESITATE] = player->threshold;
+    player->timeout[HESITATE] = player->threshold / 2;
 
     player->focus += 0.01;
-    player->focus *= 1.05F;
-    float err = playerGetError(player) * 0.25F;
-    player->beat = randi(player->beat * (1.0F + err), err / (1.0F + err));
+    player->focus *= 1.1F;
+    float err = playerGetError(player);
+    player->beat = randi(player->beat * (1.0F + err), err / (1.0F + err)) * 1.1F;
 
     playerFixBeat(player);
     playerFixFocus(player);
@@ -375,8 +385,12 @@ void playerFixFocus(player_t *player) {
 void playerFixBeat(player_t *player) {
     if (player->beat < MIND_MIN_BEAT) {
         player->beat = MIND_MIN_BEAT;
+        player->timeout[HESITATE] = 0;
+        player->timeout[BORED] += 2 * player->threshold;
     } else if (player->beat > MIND_MAX_BEAT) {
         player->beat = MIND_MAX_BEAT;
+        player->timeout[BORED] = 0;
+        player->timeout[HESITATE] += 2 * player->threshold;
     }
     
     return;
@@ -389,7 +403,7 @@ void playerTryPlay(player_t *player) {
     uint32_t lowest_card = stackPeek(&player->hand);
     game_t *game = player->game;
 
-    if (game->level.n_cards > 1 &&                                     // always play the round's final card instantly
+    if (stackGetSize(&player->hand) < game->level.n_cards &&           // always play the round's final card(s) instantly
         (player->count < lowest_card ||                                // play if count reaches player's lowest card -
          (lowest_card + game->level.n_cards - 1) > MIND_DECK_SIZE)) {  // - unless card is so high that there are definitely lower cards
         return;
@@ -488,7 +502,7 @@ void gameLevelSetup(game_t *game, uint8_t n_level) {
         player->threshold = randi(deck_size / (n_level * game->n_players), playerGetError(player));
         player->focus = 0.5F;
         player->count = 0;
-        memset(player->timeout, 0, mind_n_player_effects * sizeof(player->timeout[0]));
+        // memset(player->timeout, 0, mind_n_player_effects * sizeof(player->timeout[0]));
         player->pile_card = 0;
         player->last_card_played = 0;
         player->n = player - game->players;
@@ -514,7 +528,7 @@ void gameLevelNext(game_t *game) {
     } else {
         printf("\nLEVEL %02d LOST! resetting...\n", game->level.n);
     }
-    SLEEP(3000);
+    SLEEP(0);
 
     for (player_t *player = game->players; player < game->players + game->n_players; player++) {
         stackMoveN(&game->deck, &player->hand, stackGetSize(&player->hand));
